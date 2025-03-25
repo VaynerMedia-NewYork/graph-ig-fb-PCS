@@ -20,58 +20,6 @@ from cube_client.logging import init_jupyterlab_logging
 import logging
 import pandas as pd
 
-init_jupyterlab_logging(level=logging.WARNING)
-macro = get_current_macro()
-
-# Configure logging
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
-logger = logging.getLogger(__name__)
-
-# Batch filtering logic - moved outside of functions
-batch_number = 3 
-batch_df = pd.read_csv(macro.get_dataset_path(46830))
-exclude_client_list = batch_df[batch_df['batch'] < batch_number]['client'].tolist()
-print(exclude_client_list)  # clients in batch 1 and 2
-
-# Set snowflake credentials
-snowflake_account = os.getenv("snowflake_account_PCS")
-snowflake_password = os.getenv("snowflake_password_PCS")
-snowflake_user = os.getenv("snowflake_user_PCS")
-snowflake_warehouse=os.getenv("snowflake_warehouse_PCS")
-snowflake_database=os.getenv("snowflake_database_PCS")
-snowflake_schema=os.getenv("snowflake_schema_PCS")
-snowflake_user_role = os.getenv("snowflake_user_role_PCS")
-
-snowflake_connection_parameters = {"account": snowflake_account,"user": snowflake_user,"role": snowflake_user_role,"warehouse": snowflake_warehouse,"database": snowflake_database,"schema": snowflake_schema,"password": snowflake_password}
-
-# Suppress warnings
-warnings.filterwarnings('ignore')
-
-# Set timezone
-ny_timezone = timezone("America/New_York")
-
-# Initialize Snowflake connection
-logger.info("Connecting to Snowflake...")
-ts = sf.Snowflake(snowflake_connection_parameters)
-
-# Load the snowflake view into a dataframe - moved outside of functions
-logger.info("Loading data from Snowflake view...")
-df0 = ts.read_snowflake_to_df(
-    database='VM_CORE_DATA', 
-    schema='VM_PCS_ASSIST', 
-    table_name='"vw_pcsa_comments_source_view"'
-)
-
-full_client_list = df0['client'].unique()
-print("full client list: ", full_client_list)
-client_batch_list = [x for x in full_client_list if x not in exclude_client_list]
-
-# Final dataframe for processing
-df = df0[df0['client'].isin(client_batch_list)]
-logger.info(f"Loaded {len(df)} rows from Snowflake view after filtering")
-
-# Get access token from environment variable
-access_token = os.getenv("access_token")
 
 def cleanup_temp_files(ig_output_path, fb_output_path):
     """
