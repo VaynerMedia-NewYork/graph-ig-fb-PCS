@@ -23,11 +23,15 @@ import pandas as pd
 init_jupyterlab_logging(level=logging.WARNING)
 macro = get_current_macro()
 
-batch_number = 3 
+# Configure logging
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logger = logging.getLogger(__name__)
 
-batch_df=pd.read_csv(macro.get_dataset_path(46830))
-exclude_client_list=batch_df[batch_df['batch']<batch_number]['client'].to_list()
-print(exclude_client_list)   # clients in batch 1 and 2
+# Batch filtering logic - moved outside of functions
+batch_number = 3 
+batch_df = pd.read_csv(macro.get_dataset_path(46830))
+exclude_client_list = batch_df[batch_df['batch'] < batch_number]['client'].tolist()
+print(exclude_client_list)  # clients in batch 1 and 2
 
 # Set snowflake credentials
 snowflake_account = os.getenv("snowflake_account_PCS")
@@ -40,10 +44,34 @@ snowflake_user_role = os.getenv("snowflake_user_role_PCS")
 
 snowflake_connection_parameters = {"account": snowflake_account,"user": snowflake_user,"role": snowflake_user_role,"warehouse": snowflake_warehouse,"database": snowflake_database,"schema": snowflake_schema,"password": snowflake_password}
 
-# Configure logging
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
-logger = logging.getLogger(__name__)
+# Suppress warnings
+warnings.filterwarnings('ignore')
 
+# Set timezone
+ny_timezone = timezone("America/New_York")
+
+# Initialize Snowflake connection
+logger.info("Connecting to Snowflake...")
+ts = sf.Snowflake(snowflake_connection_parameters)
+
+# Load the snowflake view into a dataframe - moved outside of functions
+logger.info("Loading data from Snowflake view...")
+df0 = ts.read_snowflake_to_df(
+    database='VM_CORE_DATA', 
+    schema='VM_PCS_ASSIST', 
+    table_name='"vw_pcsa_comments_source_view"'
+)
+
+full_client_list = df0['client'].unique()
+print("full client list: ", full_client_list)
+client_batch_list = [x for x in full_client_list if x not in exclude_client_list]
+
+# Final dataframe for processing
+df = df0[df0['client'].isin(client_batch_list)]
+logger.info(f"Loaded {len(df)} rows from Snowflake view after filtering")
+
+# Get access token from environment variable
+access_token = os.getenv("access_token")
 
 def cleanup_temp_files(ig_output_path, fb_output_path):
     """
@@ -228,10 +256,13 @@ def process_links(df, access_token, output_directory):
         traceback.print_exc()
         return None
 
-def main():
+def main(df, access_token):
     """
-    Main function to process all Facebook and Instagram links 
-    from Snowflake view and save comments to a CSV file.
+    Main function to process all Facebook and Instagram links and save comments to a CSV file.
+    
+    Args:
+        df (pandas.DataFrame): DataFrame with social media links to process
+        access_token (str): API access token for both Instagram and Facebook
     """
     try:
         # Define output directory
@@ -245,39 +276,10 @@ def main():
         # Clear output directory at the start
         clear_output_directory(output_directory)
         
-        # Suppress warnings
-        warnings.filterwarnings('ignore')
-        
-        # Set timezone
-        ny_timezone = timezone("America/New_York")
-        
-        # Initialize Snowflake connection
-        logger.info("Connecting to Snowflake...")
-        ts = sf.Snowflake(snowflake_connection_parameters)
-        
-        # Load the snowflake view into a dataframe
-        logger.info("Loading data from Snowflake view...")
-        df0 = ts.read_snowflake_to_df(
-            database='VM_CORE_DATA', 
-            schema='VM_PCS_ASSIST', 
-            table_name='"vw_pcsa_comments_source_view"'
-        )
-
-        full_client_list=df0['client'].unique()
-        print("full client list: ",full_client_list)
-        client_batch_list=[x for x in full_client_list if x not in exclude_client_list]
-        print("clients in the batch: ", client_batch_list)
-
-        df=df[df['client'].isin(client_batch_list)]
-        
-        logger.info(f"Loaded {len(df)} rows from Snowflake view")
-        
         # Check if we have data
         if df.empty:
-            logger.error("No data loaded from Snowflake view.")
+            logger.error("No data available for processing.")
             return
-        
-        access_token = os.getenv("access_token")
         
         # Process all links and save results
         output_file = process_links(df, access_token, output_directory)
@@ -293,4 +295,5 @@ def main():
         traceback.print_exc()
 
 if __name__ == "__main__":
-    main()
+    
+    main(df, access_token)
