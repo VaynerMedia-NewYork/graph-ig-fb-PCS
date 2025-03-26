@@ -203,6 +203,9 @@ def main(df, access_token):
     Args:
         df (pandas.DataFrame): DataFrame with social media links to process
         access_token (str): API access token for both Instagram and Facebook
+        
+    Returns:
+        str: Path to the output file, or None if processing failed
     """
     try:
         # Define output directory
@@ -219,7 +222,7 @@ def main(df, access_token):
         # Check if we have data
         if df.empty:
             print("No data available for processing.")
-            return
+            return None
         
         # Process all links and save results
         output_file = process_links(df, access_token, output_directory)
@@ -229,27 +232,5 @@ def main(df, access_token):
         else:
             print("Processing completed with errors. No output file was created.")
             
-    except Exception as e:
-        print(f"Error in main function: {str(e)}")
-        traceback.print_exc()
-
-# When running as a script
-if __name__ == "__main__":
-    try:
-        # Import any needed dependencies for data retrieval
-        from dotenv import load_dotenv
-        load_dotenv()
-        
-        # Check if df and access_token are already defined
-        try:
-            # This will throw a NameError if df is not defined
-            df_check = df
-            token_check = access_token
-            # If we get here, both variables are defined
-            main(df, access_token)
-        except NameError:
-            print("Required variables 'df' or 'access_token' not defined.")
-            print("Please ensure you define 'df' and 'access_token' before running this script.")
-    except Exception as e:
-        print(f"Error during execution: {str(e)}")
-        traceback.print_exc()
+        return output_file
+            
