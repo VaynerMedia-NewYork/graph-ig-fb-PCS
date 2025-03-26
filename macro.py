@@ -15,10 +15,9 @@ import glob
 from instagram.instagram_fetcher import InstagramFetcher
 from facebook.facebook_fetcher import FacebookCommentsFetcher
 
-from cube_client import get_current_macro
-from cube_client.logging import init_jupyterlab_logging
-import logging
-import pandas as pd
+# Setup logging - made global and accessible to all functions
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logger = logging.getLogger(__name__)
 
 
 def cleanup_temp_files(ig_output_path, fb_output_path):
@@ -241,7 +240,8 @@ def main(df, access_token):
         logger.error(f"Error in main function: {str(e)}")
         import traceback
         traceback.print_exc()
-
+        
+# Make sure the logger is initialized before running the script
 if __name__ == "__main__":
-    
+    # This ensures that the logger is properly initialized when running as a script
     main(df, access_token)
