@@ -64,8 +64,8 @@ def process_links(df, access_token, output_directory):
     """
     try:
         # Import our fetchers - do it here to avoid any circular import issues
-        from instagram.instagram_fetcher import InstagramFetcher
-        from facebook.facebook_fetcher import FacebookCommentsFetcher
+        from .instagram.instagram_fetcher import InstagramFetcher
+        from .facebook.facebook_fetcher import FacebookCommentsFetcher
         
         # Initialize fetchers
         ig_fetcher = InstagramFetcher()
@@ -225,12 +225,16 @@ def main(df, access_token):
             return None
         
         # Process all links and save results
-        output_file = process_links(df, access_token, output_directory)
+        output_file, comments_df = process_links(df, access_token, output_directory)
         
         if output_file:
             print(f"Processing completed successfully. Results saved to {output_file}")
         else:
             print("Processing completed with errors. No output file was created.")
             
-        return output_file
+        return output_file,comments_df
+    
+    except Exception as e:
+        print(f"An error occurred: {e}")
+        return None
             
