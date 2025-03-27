@@ -189,7 +189,7 @@ def process_links(df, access_token, output_directory):
                 except Exception as e:
                     print(f"Error retrying link {link}: {str(e)}")
         
-        return combined_output_path
+        return combined_output_path, comments_df
         
     except Exception as e:
         print(f"Error in process_links function: {str(e)}")
