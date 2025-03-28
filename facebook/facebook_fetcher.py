@@ -34,7 +34,7 @@ class FacebookCommentsFetcher:
                 self.user_access_token = access_token
             else:
                 # Read from config file or environment variable
-                self.user_access_token = os.environ.get('FACEBOOK_ACCESS_TOKEN')
+                self.user_access_token = os.getenv('access_token')
                 if not self.user_access_token:
                     raise ValueError("No Facebook access token provided. Set FACEBOOK_ACCESS_TOKEN environment variable.")
             
@@ -109,39 +109,45 @@ class FacebookCommentsFetcher:
             logger.error(f"Error getting Facebook pages and tokens: {str(e)}")
             return {}
     
+
     def get_page_details_by_name(self, page_name):
         """
         Get page ID and access token by matching page name.
-        
+
         Args:
-            page_name (str): The name of the Facebook page.
-        
+            page_name (str): The name of the Facebook page or a comma-separated list of names.
+
         Returns:
             tuple: (page_id, page_token) or (None, None) if not found
         """
-        # Try exact match first
-        for name, details in self.page_dict.items():
-            if name.lower() == page_name.lower():
-                logger.info(f"Found exact match for '{page_name}': {name}")
-                return details['id'], details['access_token']
-        
-        # Try fuzzy match if exact match fails
+        # Split the page names if there are multiple
+        page_names = [name.strip() for name in page_name.split(',')] if page_name else []
+
         best_match = None
         best_score = 0
-        
-        for name, details in self.page_dict.items():
-            score = fuzz.ratio(page_name.lower(), name.lower())
-            if score > best_score:
-                best_score = score
-                best_match = (name, details)
-        
+
+        for name in page_names:
+            # Try exact match first
+            for page_name, details in self.page_dict.items():
+                if page_name.lower() == name.lower():
+                    logger.info(f"Found exact match for '{name}': {page_name}")
+                    return details['id'], details['access_token']
+
+            # Try fuzzy match if exact match fails
+            for page_name, details in self.page_dict.items():
+                score = fuzz.ratio(name.lower(), page_name.lower())
+                if score > best_score:
+                    best_score = score
+                    best_match = (page_name, details)
+
         # If a good fuzzy match is found
         if best_match and best_score > 30:  # 30% similarity threshold
             logger.info(f"Using best fuzzy match for '{page_name}': {best_match[0]} (score: {best_score}%)")
             return best_match[1]['id'], best_match[1]['access_token']
-        
+
         logger.warning(f"Could not find a matching page for '{page_name}'")
         return None, None
+
     
     def extract_post_id_from_url(self, url):
         """
@@ -550,74 +556,102 @@ class FacebookCommentsFetcher:
         
         return formatted_comments
     
-    def process_link(self, post_url, access_token, client="Unknown"):
+
+    def process_link(self, post_url, access_token, client=None):
         """Process a single Facebook post URL and fetch its comments."""
         if not post_url or 'facebook' not in post_url:
             logger.warning(f"URL does not contain 'facebook' or is empty: {post_url}")
             return []
-        
+
         logger.info(f"Processing post: {post_url}")
         logger.info(f"Client: {client}")
-        
+
         try:
-            # Get Page ID and token for this client
-            page_id, page_token = self.get_page_details_by_name(client)
-            if not page_id or not page_token:
-                logger.error(f"Could not find Facebook page for client: {client}. Check the page name.")
+            # Handle multiple mapped names
+            if client:
+                # Make sure client is a string before splitting
+                if isinstance(client, str):
+                    mapped_names = [name.strip() for name in client.split(',')]
+                else:
+                    # If client is not a string (e.g., None, nan, or a number)
+                    logger.warning(f"Client value is not a string: {client}, type: {type(client)}")
+                    mapped_names = []
+
+                # Try each mapped name
+                for name in mapped_names:
+                    if not name:  # Skip empty names
+                        continue
+
+                    # Get Page ID and token for this client
+                    page_id, page_token = self.get_page_details_by_name(name)
+                    if not page_id or not page_token:
+                        logger.error(f"Could not find Facebook page for client: {name}. Check the page name.")
+                        continue
+
+                    # Extract post ID from URL
+                    url_page_id, url_post_id = self.extract_post_id_from_url(post_url)
+
+                    # Construct the full post ID
+                    full_post_id = None
+
+                    # If we got page_id and post_id from URL
+                    if url_page_id and url_post_id:
+                        full_post_id = f"{url_page_id}_{url_post_id}"
+                    # If we only got post_id from URL but have page_id from client match
+                    elif page_id and url_post_id:
+                        full_post_id = f"{page_id}_{url_post_id}"
+
+                    # If we couldn't construct post ID directly, try searching
+                    if not full_post_id:
+                        full_post_id = self.find_post_by_url_or_content(page_id, page_token, post_url, None)
+
+                    if not full_post_id:
+                        logger.error(f"Could not find post ID for URL: {post_url}")
+                        continue
+
+                    logger.info(f"Using full post ID: {full_post_id}")
+
+                    # Get comments for the post (with limit of 20,000 as requested)
+                    comments = self.get_facebook_comments(full_post_id, page_token, limit=20000)
+
+                    if not comments:
+                        logger.info(f"No comments found for this post.")
+                        continue
+
+                    # Format comments for output
+                    formatted_comments = self.format_comments_for_output(comments, name, post_url)
+
+                    logger.info(f"Processed {len(formatted_comments)} comments for post: {post_url}")
+
+                    # Add comments to our collection
+                    self.all_comments.extend(formatted_comments)
+
+                    # Save the comments to a file
+                    self.save_comments()
+
+                    return formatted_comments
+
+                # If we reached here, none of the mapped names worked
+                logger.error(f"Could not process post with any of the provided client names")
+                self.failed_links.append(post_url)
                 return []
-            
-            # Extract post ID from URL
-            url_page_id, url_post_id = self.extract_post_id_from_url(post_url)
-            
-            # Construct the full post ID
-            full_post_id = None
-            
-            # If we got page_id and post_id from URL
-            if url_page_id and url_post_id:
-                full_post_id = f"{url_page_id}_{url_post_id}"
-            # If we only got post_id from URL but have page_id from client match
-            elif page_id and url_post_id:
-                full_post_id = f"{page_id}_{url_post_id}"
-            
-            # If we couldn't construct post ID directly, try searching
-            if not full_post_id:
-                full_post_id = self.find_post_by_url_or_content(page_id, page_token, post_url, None)
-            
-            if not full_post_id:
-                logger.error(f"Could not find post ID for URL: {post_url}")
+            else:
+                # No client provided
+                logger.error(f"No client name provided for post: {post_url}")
+                self.failed_links.append(post_url)
                 return []
-            
-            logger.info(f"Using full post ID: {full_post_id}")
-            
-            # Get comments for the post (with limit of 20,000 as requested)
-            comments = self.get_facebook_comments(full_post_id, page_token, limit=20000)
-            
-            if not comments:
-                logger.info(f"No comments found for this post.")
-                return []
-            
-            # Format comments for output
-            formatted_comments = self.format_comments_for_output(comments, client, post_url)
-            
-            logger.info(f"Processed {len(formatted_comments)} comments for post: {post_url}")
-            
-            # Add comments to our collection
-            self.all_comments.extend(formatted_comments)
-            
-            # Save the comments to a file
-            self.save_comments()
-            
-            return formatted_comments
-            
+
         except requests.exceptions.RequestException as e:
             logger.error(f"Request exception processing post: {str(e)}")
             if "429" in str(e):
                 logger.warning("Rate limit detected. Pausing processing.")
                 time.sleep(60)  # Sleep for a minute on rate limit
+            self.failed_links.append(post_url)
             return []
         except Exception as e:
             logger.error(f"Error processing post: {str(e)}")
             traceback.print_exc()
+            self.failed_links.append(post_url)
             return []
     
     def save_comments(self):
