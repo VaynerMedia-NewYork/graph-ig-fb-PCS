@@ -49,7 +49,7 @@ def clear_output_directory(output_dir):
     except Exception as e:
         print(f"Error clearing output directory: {str(e)}")
 
-def process_links(df, access_token, output_directory):
+def process_links(df, access_token, output_directory, graph_api_mapping):
     """
     Process all social media links in the dataframe.
     Handles both Instagram and Facebook links.
@@ -58,12 +58,13 @@ def process_links(df, access_token, output_directory):
         df (pandas.DataFrame): DataFrame containing 'client' and 'link' columns
         access_token (str): API access token for both Instagram and Facebook
         output_directory (str): Directory to save the output CSV file
+        graph_api_mapping (dict): Mapping of client names to Graph API names
     
     Returns:
-        str: Path to the combined output CSV file
+        tuple: (path to combined output CSV, DataFrame with comments)
     """
     try:
-        # Import our fetchers - do it here to avoid any circular import issues
+        # Import our fetchers 
         from .instagram.instagram_fetcher import InstagramFetcher
         from .facebook.facebook_fetcher import FacebookCommentsFetcher
         
@@ -79,21 +80,32 @@ def process_links(df, access_token, output_directory):
         print(f"Found {len(facebook_df)} Facebook links")
         print(f"Found {len(instagram_df)} Instagram links")
         
+        # Track original client names and links
+        link_to_client = dict(zip(df['link'], df['client']))
+        
         # Process Instagram links
         print("Starting Instagram links processing...")
         for index, row in instagram_df.iterrows():
             try:
                 client = row['client']
                 link = row['link']
-                
+                mapped_names = graph_api_mapping.get(client, None)
+
+                # Fall back to original client name if no mapping exists
+                if mapped_names is None or pd.isna(mapped_names):
+                    print(f"No mapping found for client '{client}', using original client name for fuzzy matching")
+                    mapped_names = client  # Use the original client name
+                else:
+                    print(f"Mapped client '{client}' to Graph API name '{mapped_names}'")
+
                 print(f"Processing Instagram link {index+1}/{len(instagram_df)}: {link}")
-                ig_fetcher.process_link(link, access_token, client=client)
-                
+                comments = ig_fetcher.process_link(link, access_token, client=mapped_names)
+
                 # Add a delay between requests to avoid rate limiting
                 if index < len(instagram_df) - 1:
                     print("Waiting 3 seconds before next Instagram request...")
                     time.sleep(3)
-                    
+
             except Exception as e:
                 print(f"Error processing Instagram link {row['link']}: {str(e)}")
                 if not hasattr(ig_fetcher, 'failed_links'):
@@ -107,15 +119,23 @@ def process_links(df, access_token, output_directory):
             try:
                 client = row['client']
                 link = row['link']
-                
+                mapped_names = graph_api_mapping.get(client, None)
+
+                # Fall back to original client name if no mapping exists
+                if mapped_names is None or pd.isna(mapped_names):
+                    print(f"No mapping found for client '{client}', using original client name for fuzzy matching")
+                    mapped_names = client  # Use the original client name
+                else:
+                    print(f"Mapped client '{client}' to Graph API name '{mapped_names}'")
+
                 print(f"Processing Facebook link {index+1}/{len(facebook_df)}: {link}")
-                fb_fetcher.process_link(link, access_token, client=client)
-                
+                comments = fb_fetcher.process_link(link, access_token, client=mapped_names)
+
                 # Add a delay between requests to avoid rate limiting
                 if index < len(facebook_df) - 1:
                     print("Waiting 3 seconds before next Facebook request...")
                     time.sleep(3)
-                    
+
             except Exception as e:
                 print(f"Error processing Facebook link {row['link']}: {str(e)}")
                 if not hasattr(fb_fetcher, 'failed_links'):
@@ -134,20 +154,36 @@ def process_links(df, access_token, output_directory):
         ig_output_path = getattr(ig_fetcher, 'output_path', None)
         fb_output_path = getattr(fb_fetcher, 'output_path', None)
         
-        # Combine all comments
-        all_comments = ig_comments + fb_comments
+        # Prepare comments with original client names
+        prepared_comments = []
+        for comment in (ig_comments + fb_comments):
+            # Find the original client name based on the URL
+            original_client = None
+            for link, client in link_to_client.items():
+                if comment.get('url') and link in comment['url']:
+                    original_client = client
+                    break
+            
+            # If no link match found, try to use the current client name
+            if original_client is None:
+                original_client = comment.get('client', 'Unknown')
+            
+            # Update the comment with the original client name
+            comment['client'] = original_client
+            prepared_comments.append(comment)
         
-        if not all_comments:
+        # Combine all comments
+        if not prepared_comments:
             print("No comments were collected from any platform.")
-            return None
+            return None, None
         
         # Create timestamp for combined file
         timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
         combined_output_path = os.path.join(output_directory, f"all_social_comments_{timestamp}.csv")
         
         # Create DataFrame from combined comments
-        print(f"Creating combined DataFrame with {len(all_comments)} comments...")
-        comments_df = pd.DataFrame(all_comments)
+        print(f"Creating combined DataFrame with {len(prepared_comments)} comments...")
+        comments_df = pd.DataFrame(prepared_comments)
         
         # Process the data
         print("Processing dates and adding week column...")
@@ -175,37 +211,65 @@ def process_links(df, access_token, output_directory):
         print("Cleaning up temporary files...")
         cleanup_temp_files(ig_output_path, fb_output_path)
         
-        # Retry failed links once more
+        # Retry failed links
         print("Retrying failed links...")
         failed_links = getattr(ig_fetcher, 'failed_links', []) + getattr(fb_fetcher, 'failed_links', [])
         if failed_links:
             for link in failed_links:
                 try:
+                    # Find the original client name for this link
+                    client_name = link_to_client.get(link, '')
+                    mapped_names = graph_api_mapping.get(client_name, None)
+                    
+                    if mapped_names is None or pd.isna(mapped_names):
+                        mapped_names = client_name
+                    else:
+                        print(f"Retry: Mapped client '{client_name}' to Graph API name '{mapped_names}'")
+                    
                     if 'instagram' in link.lower():
-                        ig_fetcher.process_link(link, access_token)
+                        comments = ig_fetcher.process_link(link, access_token, client=mapped_names)
                     elif 'facebook' in link.lower():
-                        fb_fetcher.process_link(link, access_token)
+                        comments = fb_fetcher.process_link(link, access_token, client=mapped_names)
+                    
+                    # Prepare retried comments with original client name
+                    if comments:
+                        for comment in comments:
+                            comment['client'] = client_name
+                        comments_df = pd.concat([comments_df, pd.DataFrame(comments)], ignore_index=True)
+                    
                     print(f"Retried link: {link}")
                 except Exception as e:
                     print(f"Error retrying link {link}: {str(e)}")
+        
+        # Final save with retried links
+        if not comments_df.empty:
+            # Reapply processing to new DataFrame
+            comments_df['date'] = pd.to_datetime(comments_df['date'])
+            comments_df['week'] = comments_df['date'] - pd.to_timedelta(comments_df['date'].dt.weekday, unit='D')
+            comments_df['week'] = comments_df['week'].dt.strftime('%Y-%m-%d')
+            comments_df.to_csv(combined_output_path, index=False)
+            print(f"Updated comments file with retried links: {combined_output_path}")
         
         return combined_output_path, comments_df
         
     except Exception as e:
         print(f"Error in process_links function: {str(e)}")
         traceback.print_exc()
-        return None
+        return None, None
 
-def main(df, access_token):
+# CHANGE
+
+def main(df, access_token, graph_api_mapping):
     """
     Main function to process all Facebook and Instagram links and save comments to a CSV file.
     
     Args:
         df (pandas.DataFrame): DataFrame with social media links to process
         access_token (str): API access token for both Instagram and Facebook
+        graph_api_mapping (dict): Mapping of client names to their corresponding graph API names
         
     Returns:
-        str: Path to the output file, or None if processing failed
+        tuple: (path to output file, DataFrame with comments)
     """
     try:
         # Define output directory
@@ -222,19 +286,18 @@ def main(df, access_token):
         # Check if we have data
         if df.empty:
             print("No data available for processing.")
-            return None
+            return None, None
         
         # Process all links and save results
-        output_file, comments_df = process_links(df, access_token, output_directory)
+        output_file, comments_df = process_links(df, access_token, output_directory, graph_api_mapping)
         
         if output_file:
             print(f"Processing completed successfully. Results saved to {output_file}")
         else:
             print("Processing completed with errors. No output file was created.")
             
-        return output_file,comments_df
+        return output_file, comments_df
     
     except Exception as e:
         print(f"An error occurred: {e}")
-        return None
-            
+        return None, None
