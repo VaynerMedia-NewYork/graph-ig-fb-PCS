@@ -22,80 +22,179 @@ class InstagramFetcher:
         self.output_path = f"instagram_comments_{self.timestamp}.csv"
         
 
-    def get_instagram_business_id(self, access_token, page_name=None):
+    # def get_instagram_business_id(self, access_token, page_name=None):
+    #     """
+    #     Get the Instagram Business Account ID from a Facebook Page.
+
+    #     Args:
+    #         access_token (str): The access token for the Graph API.
+    #         page_name (str): The name of the Facebook page (optional).
+
+    #     Returns:
+    #         str: The Instagram Business Account ID or None if not found.
+    #     """
+    #     # Step 1: Find the Page ID by searching for the page by name if provided
+    #     if page_name:
+    #         search_url = f"{self.base_url}/{self.api_version}/me/accounts?access_token={access_token}"
+    #         logger.info(f"Searching for Facebook Pages matching '{page_name}'...")
+    #         response = requests.get(search_url)
+    #         if response.status_code != 200:
+    #             logger.error(f"Error searching for pages: {response.text}")
+    #             return None
+
+    #         pages = response.json().get('data', [])
+    #         if not pages:
+    #             logger.warning("No pages found or no access to pages")
+    #             return None
+
+    #         # Try to find the exact page first
+    #         page_id = None
+    #         best_match = None
+    #         best_score = 0
+
+    #         for page in pages:
+    #             page_name_from_api = page.get('name', '')
+    #             logger.info(f"Found page: {page_name_from_api} (ID: {page.get('id')})")
+
+    #             # Check for exact match
+    #             if page_name_from_api.lower() == page_name.lower():
+    #                 page_id = page.get('id')
+    #                 logger.info(f"Found exact match for '{page_name}': {page_name_from_api}")
+    #                 break
+
+    #             # Calculate fuzzy match score
+    #             score = fuzz.ratio(page_name.lower(), page_name_from_api.lower())
+    #             if score > best_score:
+    #                 best_score = score
+    #                 best_match = page
+
+    #         # If no exact match found, use the best fuzzy match if good enough
+    #         if not page_id and best_score > 30:  # 30% similarity threshold
+    #             page_id = best_match.get('id')
+    #             logger.info(f"Using best fuzzy match for '{page_name}': {best_match.get('name')} (score: {best_score}%)")
+
+    #         if not page_id:
+    #             logger.warning(f"Could not find a matching page for '{page_name}'")
+    #             return None
+    #     else:
+    #         logger.warning("No page name provided for Instagram Business ID lookup.")
+    #         return None  # Return None if no page name is provided
+
+    #     # Step 2: Get the Instagram Business Account ID connected to this Page
+    #     ig_url = f"{self.base_url}/{self.api_version}/{page_id}?fields=instagram_business_account&access_token={access_token}"
+    #     logger.info(f"Requesting Instagram Business Account...")
+    #     response = requests.get(ig_url)
+    #     if response.status_code != 200:
+    #         logger.error(f"Error getting Instagram business account: {response.text}")
+    #         return None
+
+    #     instagram_data = response.json().get('instagram_business_account', {})
+    #     if not instagram_data:
+    #         logger.warning(f"No Instagram Business Account connected to this Page")
+    #         return None
+
+    #     ig_business_id = instagram_data.get('id')
+    #     logger.info(f"Found Instagram Business Account ID: {ig_business_id}")
+    #     return ig_business_id
+
+    def get_instagram_business_id(access_token, page_name):
         """
         Get the Instagram Business Account ID from a Facebook Page.
-
-        Args:
-            access_token (str): The access token for the Graph API.
-            page_name (str): The name of the Facebook page (optional).
-
-        Returns:
-            str: The Instagram Business Account ID or None if not found.
+        With pagination to search through all available pages.
         """
-        # Step 1: Find the Page ID by searching for the page by name if provided
-        if page_name:
-            search_url = f"{self.base_url}/{self.api_version}/me/accounts?access_token={access_token}"
-            logger.info(f"Searching for Facebook Pages matching '{page_name}'...")
-            response = requests.get(search_url)
+        base_url = "https://graph.facebook.com"
+        api_version = "v22.0"
+        
+        # Step 1: Find the Page ID by searching for the page by name with pagination
+        search_url = f"{base_url}/{api_version}/me/accounts?access_token={access_token}"
+        print(f"Searching for Facebook Pages matching '{page_name}'...")
+        
+        pages = []
+        next_page_url = search_url
+        page_count = 0
+        
+        # Loop through all pages of results
+        while next_page_url:
+            page_count += 1
+            print(f"Retrieving page {page_count} of Facebook Pages...")
+            
+            response = requests.get(next_page_url)
             if response.status_code != 200:
-                logger.error(f"Error searching for pages: {response.text}")
+                print(f"Error searching for pages: {response.text}")
                 return None
-
-            pages = response.json().get('data', [])
-            if not pages:
-                logger.warning("No pages found or no access to pages")
-                return None
-
-            # Try to find the exact page first
-            page_id = None
-            best_match = None
-            best_score = 0
-
-            for page in pages:
-                page_name_from_api = page.get('name', '')
-                logger.info(f"Found page: {page_name_from_api} (ID: {page.get('id')})")
-
-                # Check for exact match
-                if page_name_from_api.lower() == page_name.lower():
-                    page_id = page.get('id')
-                    logger.info(f"Found exact match for '{page_name}': {page_name_from_api}")
-                    break
-
-                # Calculate fuzzy match score
-                score = fuzz.ratio(page_name.lower(), page_name_from_api.lower())
-                if score > best_score:
-                    best_score = score
-                    best_match = page
-
-            # If no exact match found, use the best fuzzy match if good enough
-            if not page_id and best_score > 30:  # 30% similarity threshold
-                page_id = best_match.get('id')
-                logger.info(f"Using best fuzzy match for '{page_name}': {best_match.get('name')} (score: {best_score}%)")
-
-            if not page_id:
-                logger.warning(f"Could not find a matching page for '{page_name}'")
-                return None
-        else:
-            logger.warning("No page name provided for Instagram Business ID lookup.")
-            return None  # Return None if no page name is provided
-
+            
+            result = response.json()
+            current_pages = result.get('data', [])
+            
+            if not current_pages:
+                print(f"No more pages found on page {page_count}")
+                break
+                
+            pages.extend(current_pages)
+            print(f"Found {len(current_pages)} pages on page {page_count} (total: {len(pages)})")
+            
+            # Check if there's another page of results
+            next_page_url = result.get('paging', {}).get('next')
+            
+            # Add a small delay to avoid rate limiting
+            if next_page_url:
+                time.sleep(1)
+        
+        if not pages:
+            print("No pages found or no access to pages")
+            return None
+        
+        print(f"Retrieved a total of {len(pages)} Facebook Pages")
+        
+        # Try to find the exact page first
+        page_id = None
+        best_match = None
+        best_score = 0
+        
+        for page in pages:
+            page_name_from_api = page.get('name', '')
+            
+            # Check for exact match
+            if page_name_from_api.lower() == page_name.lower():
+                page_id = page.get('id')
+                print(f"Found exact match for '{page_name}': {page_name_from_api} (ID: {page.get('id')})")
+                break
+                
+            # Calculate fuzzy match score
+            score = fuzz.ratio(page_name.lower(), page_name_from_api.lower())
+            if score > best_score:
+                best_score = score
+                best_match = page
+        
+        # If no exact match found, use the best fuzzy match if good enough
+        if not page_id and best_score > 70:  # 70% similarity threshold
+            page_id = best_match.get('id')
+            print(f"Using best fuzzy match for '{page_name}': {best_match.get('name')} (score: {best_score}%) (ID: {page_id})")
+        
+        if not page_id:
+            print(f"Could not find a matching page for '{page_name}' among {len(pages)} pages")
+            return None
+        
         # Step 2: Get the Instagram Business Account ID connected to this Page
-        ig_url = f"{self.base_url}/{self.api_version}/{page_id}?fields=instagram_business_account&access_token={access_token}"
-        logger.info(f"Requesting Instagram Business Account...")
+        ig_url = f"{base_url}/{api_version}/{page_id}?fields=instagram_business_account&access_token={access_token}"
+        print(f"Requesting Instagram Business Account...")
+        
         response = requests.get(ig_url)
         if response.status_code != 200:
-            logger.error(f"Error getting Instagram business account: {response.text}")
+            print(f"Error getting Instagram business account: {response.text}")
             return None
-
+        
         instagram_data = response.json().get('instagram_business_account', {})
+        
         if not instagram_data:
-            logger.warning(f"No Instagram Business Account connected to this Page")
+            print(f"No Instagram Business Account connected to this Page")
             return None
-
+        
         ig_business_id = instagram_data.get('id')
-        logger.info(f"Found Instagram Business Account ID: {ig_business_id}")
+        print(f"Found Instagram Business Account ID: {ig_business_id}")
+        
         return ig_business_id
+
     
     def search_instagram_media_with_extensive_pagination(self, ig_business_id, media_code, access_token):
         """
