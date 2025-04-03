@@ -97,7 +97,7 @@ class InstagramFetcher:
     #     logger.info(f"Found Instagram Business Account ID: {ig_business_id}")
     #     return ig_business_id
 
-    def get_instagram_business_id(access_token, page_name):
+    def get_instagram_business_id(self, access_token, page_name):
         """
         Get the Instagram Business Account ID from a Facebook Page.
         With pagination to search through all available pages.
