@@ -74,77 +74,100 @@ class FacebookCommentsFetcher:
         base_url = "https://graph.facebook.com/v22.0/me/accounts"
         params = {
             'access_token': access_token,
-            'limit': 100
+            'limit': 100  # You can adjust the limit as needed
         }
         
-        try:
-            response = requests.get(base_url, params=params, timeout=30)
+        pages = []
+        next_page_url = base_url
+        page_count = 0
+        
+        # Loop through all pages of results
+        while next_page_url:
+            page_count += 1
+            logger.info(f"Retrieving page {page_count} of Facebook Pages...")
+            
+            response = requests.get(next_page_url, params=params, timeout=30)
             self.api_call_count += 1
             
             if response.status_code != 200:
                 logger.error(f"Error getting pages: {response.text}")
                 return {}
             
-            pages = response.json().get('data', [])
-            if not pages:
-                logger.warning("No pages found or no access to pages")
-                return {}
+            result = response.json()
+            current_pages = result.get('data', [])
             
-            # Create a dictionary of page names to page details
-            page_dict = {}
-            for page in pages:
-                page_name = page.get('name', '')
-                page_id = page.get('id', '')
-                page_token = page.get('access_token', '')
-                
-                logger.info(f"Found page: {page_name} (ID: {page_id})")
-                page_dict[page_name] = {
-                    'id': page_id,
-                    'access_token': page_token
-                }
+            if not current_pages:
+                logger.warning(f"No more pages found on page {page_count}")
+                break
             
-            return page_dict
+            pages.extend(current_pages)
+            logger.info(f"Found {len(current_pages)} pages on page {page_count} (total: {len(pages)})")
             
-        except Exception as e:
-            logger.error(f"Error getting Facebook pages and tokens: {str(e)}")
+            # Check if there's another page of results
+            next_page_url = result.get('paging', {}).get('next')
+            
+            # Add a small delay to avoid rate limiting
+            if next_page_url:
+                time.sleep(1)
+        
+        if not pages:
+            logger.warning("No pages found or no access to pages")
             return {}
+        
+        logger.info(f"Retrieved a total of {len(pages)} Facebook Pages")
+        
+        # Create a dictionary of page names to page details
+        page_dict = {}
+        for page in pages:
+            page_name = page.get('name', '')
+            page_id = page.get('id', '')
+            page_token = page.get('access_token', '')
+            
+            logger.info(f"Found page: {page_name} (ID: {page_id})")
+            page_dict[page_name] = {
+                'id': page_id,
+                'access_token': page_token
+            }
+        
+        return page_dict
     
 
     def get_page_details_by_name(self, page_name):
         """
         Get page ID and access token by matching page name.
-
+        
         Args:
             page_name (str): The name of the Facebook page or a comma-separated list of names.
-
+        
         Returns:
             tuple: (page_id, page_token) or (None, None) if not found
         """
         # Split the page names if there are multiple
         page_names = [name.strip() for name in page_name.split(',')] if page_name else []
-
+        
         best_match = None
         best_score = 0
-
+        
+        # Iterate through all available pages in the page_dict
         for name in page_names:
-            # Try exact match first
+            # Check for exact match first
             for page_name, details in self.page_dict.items():
                 if page_name.lower() == name.lower():
                     logger.info(f"Found exact match for '{name}': {page_name}")
                     return details['id'], details['access_token']
-
+            
             # Try fuzzy match if exact match fails
             for page_name, details in self.page_dict.items():
                 score = fuzz.ratio(name.lower(), page_name.lower())
                 if score > best_score:
                     best_score = score
                     best_match = (page_name, details)
-
+        
         # If a good fuzzy match is found
         if best_match and best_score > 30:  # 30% similarity threshold
-            logger.info(f"Using best fuzzy match for '{page_name}': {best_match[0]} (score: {best_score}%)")
+            logger.info(f"Using best fuzzy match for '{name}': {best_match[0]} (score: {best_score}%)")
             return best_match[1]['id'], best_match[1]['access_token']
-
+        
         logger.warning(f"Could not find a matching page for '{page_name}'")
         return None, None
 
